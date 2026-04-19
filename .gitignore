@@ -1,0 +1,10 @@
+build/
+out/
+.vs/
+CMakeFiles/
+CMakeCache.txt
+cmake_install.cmake
+*.user
+debug-*.log
+*.log
+_struct_out.txt
