@@ -1,3 +1,5 @@
+<img width="1059" height="597" alt="T" src="https://github.com/user-attachments/assets/2ac1bfa2-ea68-43d4-b7a8-79cdd29ba8ba" />
+
 # Prior
 
 ## Install
@@ -60,8 +62,7 @@ sfml-graphics-3.dll    # 1,061,376 bytes (1 MB)      # Draw path, textures, text
 │                                                                            │
 │ • Tetrahedron: 3D polyhedron; 4 faces, 4 vertices, 6 edges.                │
 │                                                                            │
-│ • Tetractys: 10-point triangular layout (rows 1+2+3+4); classical          │
-│   Pythagorean 2D figure, not the same object as the 3D tetrahedron.        │
+│ • Tetractys: 10-point triangular layout (rows 1+2+3+4); classical          │       
 │                                                                            │
 │ • Vertex turns: 1-6 turn from tip to base.                                 │
 │                                                                            │
