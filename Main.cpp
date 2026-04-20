@@ -5,6 +5,8 @@
 #include <SFML/Graphics.hpp>
 #include <SFML/System.hpp>
 
+#include <cstdint>
+#include <ctime>
 #include <optional>
 
 #include "pyraminx_state.h"
@@ -27,10 +29,16 @@ constexpr int kVertexTwo = 2;
 constexpr std::uint8_t kOuterVertexBand = static_cast<std::uint8_t>(kVertexBands - 1);
 
 // UI: window pixel size for the GL viewport and SFML surface (larger canvas for puzzle + HUD).
-constexpr unsigned kWindowW = 1920;
-constexpr unsigned kWindowH = 1080;
+constexpr unsigned kWindowW = 1300;
+constexpr unsigned kWindowH = 800;
 // UX: turn animation angular speed (how fast a twist completes on screen).
 constexpr float kAnimDegPerSec = 300.f;
+
+// UI: extra shrink so the 3D mesh reads fully inside the triangular window clip (wheel still zooms).
+constexpr float kMeshViewScale = 0.86f;
+
+/** UX: left-drag in the top strip moves the borderless window; below it orbits the 3D view. */
+enum class LeftDragKind : std::uint8_t { None = 0, Orbit, MoveWindow };
 
 /**
  * UX: enqueue a vertex-layer twist: one tetractys band (0 = tip … kOuterVertexBand = base) at a mesh corner.
@@ -261,7 +269,7 @@ bool tryLoadHudFont(sf::Font& fontOut, std::optional<sf::Text>& hudOut) {
     if (!ok) {
         return false;
     }
-    constexpr unsigned kHudFontPx = 24u;
+    constexpr unsigned kHudFontPx = 20u;
     hudOut.emplace(fontOut, "", kHudFontPx);
     hudOut->setFillColor(sf::Color(235, 235, 240));
     return true;
@@ -329,11 +337,20 @@ void drawHudOverlay(sf::RenderWindow& window, sf::Text& hud) {
     // UI: horizontal center of client area; origin at top-center of glyph bounds so the line sits below a small top pad.
     const sf::FloatRect lb = hud.getLocalBounds();
     hud.setOrigin({lb.position.x + lb.size.x * 0.5f, lb.position.y});
-    constexpr float kHudTopPad = 14.f;
+    constexpr float kHudTopPad = 9.f;
     hud.setPosition({static_cast<float>(window.getSize().x) * 0.5f, kHudTopPad});
     window.pushGLStates();
     window.draw(hud);
     window.popGLStates();
+}
+
+/**
+ * UI: hit-test the HUD top band (help line + pad) so borderless window drag does not steal mesh orbit drags.
+ */
+bool isPointerInHudDragStrip(sf::Vector2i p, const sf::RenderWindow& window) {
+    constexpr int kStripBottomY = 46;
+    return p.y >= 0 && p.y < kStripBottomY && p.x >= 0 &&
+           p.x < static_cast<int>(window.getSize().x);
 }
 
 /**
@@ -342,7 +359,8 @@ void drawHudOverlay(sf::RenderWindow& window, sf::Text& hud) {
  */
 template <typename StartTurnFn>
 void processFrameEvents(sf::RenderWindow& window, Renderer& renderer, PyraminxState& state, TurnAnimDraw& anim,
-                        int& activeVertex, float& yawDeg, float& pitchDeg, bool& drag, sf::Vector2i& dragPos,
+                        int& activeVertex, float& yawDeg, float& pitchDeg, LeftDragKind& leftDrag,
+                        sf::Vector2i& dragPos, sf::Vector2i& windowDragGrab,
                         sf::Clock& scrambleClock, StartTurnFn&& startTurn) {
     while (const std::optional<sf::Event> ev = window.pollEvent()) {
         if (ev->is<sf::Event::Closed>()) {
@@ -354,17 +372,25 @@ void processFrameEvents(sf::RenderWindow& window, Renderer& renderer, PyraminxSt
         }
         if (const auto* mb = ev->getIf<sf::Event::MouseButtonPressed>()) {
             if (mb->button == sf::Mouse::Button::Left) {
-                drag = true;
+                if (isPointerInHudDragStrip(mb->position, window)) {
+                    leftDrag = LeftDragKind::MoveWindow;
+                    // UX: screen-space grab offset avoids client deltas fighting the moving window (shake).
+                    windowDragGrab = sf::Mouse::getPosition() - window.getPosition();
+                } else {
+                    leftDrag = LeftDragKind::Orbit;
+                }
                 dragPos = mb->position;
             }
         }
         if (const auto* mr = ev->getIf<sf::Event::MouseButtonReleased>()) {
             if (mr->button == sf::Mouse::Button::Left) {
-                drag = false;
+                leftDrag = LeftDragKind::None;
             }
         }
         if (const auto* mm = ev->getIf<sf::Event::MouseMoved>()) {
-            if (drag) {
+            if (leftDrag == LeftDragKind::MoveWindow) {
+                window.setPosition(sf::Mouse::getPosition() - windowDragGrab);
+            } else if (leftDrag == LeftDragKind::Orbit) {
                 const int dx = mm->position.x - dragPos.x;
                 const int dy = mm->position.y - dragPos.y;
                 dragPos = mm->position;
@@ -398,7 +424,7 @@ void renderFrame(sf::RenderWindow& window, Renderer& renderer, float yawDeg, flo
     renderer.resize(static_cast<int>(window.getSize().x), static_cast<int>(window.getSize().y));
     static_cast<void>(window.setActive(true));
     renderer.beginScene(yawDeg, pitchDeg, rollDeg);
-    renderer.drawMesh(mesh, state.colors(), 1.0f, anim.active ? &anim : nullptr);
+    renderer.drawMesh(mesh, state.colors(), kMeshViewScale, anim.active ? &anim : nullptr);
     if (hud.has_value()) {
         drawHudOverlay(window, *hud);
     }
@@ -424,6 +450,9 @@ int main() {
     // UI: world scale for the mesh (with Renderer camera) sets on-screen size of the puzzle.
     const TetMesh mesh = buildTetrahedronMesh(1.6f);
     PyraminxState state(mesh);
+    // UX: start scrambled in the 3D view (same depth as Space; seed varies per launch).
+    constexpr int kDefaultScrambleMoves = 40;
+    state.scramble(kDefaultScrambleMoves, static_cast<unsigned>(std::time(nullptr)));
 
     TurnAnimDraw anim{};
     PuzzleMove pending{};
@@ -434,8 +463,9 @@ int main() {
     float yawDeg = -135.f;
     float pitchDeg = 35.f;
     const float rollDeg = -60.f;
-    bool drag = false;
+    LeftDragKind leftDrag = LeftDragKind::None;
     sf::Vector2i dragPos{};
+    sf::Vector2i windowDragGrab{};
 
     sf::Clock frameClock;
     sf::Clock scrambleClock;
@@ -448,8 +478,8 @@ int main() {
     while (window.isOpen()) {
         const float dt = frameClock.restart().asSeconds();
 
-        processFrameEvents(window, renderer, state, anim, activeVertex, yawDeg, pitchDeg, drag, dragPos, scrambleClock,
-                           startTurn);
+        processFrameEvents(window, renderer, state, anim, activeVertex, yawDeg, pitchDeg, leftDrag, dragPos,
+                           windowDragGrab, scrambleClock, startTurn);
 
         advanceTurnAnimation(dt, anim, state, pending);
 

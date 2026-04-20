@@ -72,7 +72,7 @@ void setupKeyLight() {
 
 } // namespace
 
-Renderer::Renderer() : cameraDistance_(3.2f) {}
+Renderer::Renderer() : cameraDistance_(3.5f) {}
 
 void Renderer::initialize() {
     setupFramebufferAndShadeModel();
